@@ -1,0 +1,28 @@
+[package]
+name = "fourpointprobe"
+version = "1.0.0"
+edition = "2021"
+description = "Rust rewrite of FourPointProbe_Handheld (Keithley 4-point probe + Nagy) with Default / ERS / Sequoia CSV formats"
+
+[lib]
+name = "fpp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "FourPointProbe"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+serialport = { version = "4", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+
+# Hop thoai chon thu muc goc cua Windows (chi build tren Windows)
+[target.'cfg(windows)'.dependencies]
+rfd = "0.15"
+
+[profile.release]
+opt-level = 2
+strip = true
