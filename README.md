@@ -66,18 +66,23 @@ RunMinute ghi dạng số (không có `="..."`).
 
 **Lần đầu chạy trên máy đang dùng bản cũ:** bản gốc lưu cài đặt trong hồ sơ Windows của người dùng nên không chuyển sang được. Cần làm lại:
 1. **Save Folder → Choose Save Folder...** (mặc định `C:\Data\`).
-2. Với Nagy: **Calibration → Offset Calibration**, nhập offset đang dùng (ví dụ `-0.4`).
+2. Với Nagy: menu **Offset Calibration**, nhập offset đang dùng (ví dụ `-0.4`) và mật khẩu.
 3. **CSV Format**: chọn Default / ERS / Sequoia.
 
 ## Giữ nguyên như bản gốc
 
-- Danh mục 8 line, 30 sản phẩm, 14 test, 220 điểm đo (4PP) và 4 line, 10 sản phẩm, 3 test (Nagy), lấy nguyên từ code gốc.
+- Danh mục 8 line, 30 sản phẩm (4PP) và Nagy có thêm sản phẩm **TZ18** (test 5 Points / 3 Points); còn lại, 14 test, 220 điểm đo (4PP) và 4 line, 10 sản phẩm, 3 test (Nagy), lấy nguyên từ code gốc.
 - 4PP: chờ nhấc / đặt đầu đo (2 lần đọc lệch < 1%, test Calibration < 10%), quét 4 mức dòng × 3 lần đọc điện áp, hồi quy, loại khi r < 0.99, hệ số Sample Size (Float Ribbon 1.0 / 4x4 0.9981 / 12x12 0.9997 / 3x3 0.9966), đa thức hiệu chỉnh trong khoảng Low–High. Test "2 Inch / 4 Inch Ohms" dùng giá trị điện trở trung bình của Keithley.
 - Kết quả 4PP có điểm "Not Stored" (Continuous, Gage R and R, Calibration) ghi vào `C:\Records\` như cũ (đổi được bằng `records_path` trong `fpp_config.json`).
 - Line OT1: **Get Host Data** đọc `http://ot01_h1/reports/samples/sample.flaws.00`.
 - Bấm vào một kết quả để đo lại điểm đó.
 
 ## Khác với bản gốc
+
+- Giao diện theo bản cũ: Setup Screen nhỏ gọn, MeasureForm với kết quả bên trái, số đo và biểu đồ bên phải.
+- Đổi Offset Nagy phải nhập mật khẩu (`ZZCARROT`, khai báo ở `OFFSET_PASSWORD` trong `src/main.rs`).
+- Sample Size chỉ còn một mục **10cm x 10cm** (hệ số 0.9981, bằng mẫu 4x4 inch của bản gốc). Không ảnh hưởng Nagy; với máy 4 điểm, các test trước đây dùng "Float Ribbon" (hệ số 1.0) nay nhân 0.9981.
+- `calibration.txt` do bản cũ ghi (có BOM UTF-8) đọc được bình thường; cảnh báo về file này chỉ hiện ở màn hình 4-Point Probe.
 
 - Thêm chọn định dạng CSV Default / ERS / Sequoia.
 - Dòng CSV không còn dấu phẩy thừa ở cuối, RunMinute ghi dạng số, khớp với file mẫu.

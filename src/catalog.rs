@@ -81,12 +81,14 @@ pub struct Catalog {
     pub four_point: DeviceCatalog,
 }
 
-/// Các mục Sample Size (đúng thứ tự trong ComboBox gốc) và hệ số hiệu chỉnh tương ứng
-/// trong `GetNewMeas` (Select Case SampleSize: 0 -> 1.0, 1 -> 0.9981, 2 -> 0.9997, 3 -> 0.9966).
-pub const SAMPLE_SIZES: [(&str, f64); 4] = [("Float Ribbon", 1.0), ("4x4", 0.9981), ("12x12", 0.9997), ("3x3", 0.9966)];
+/// Sample Size và hệ số hiệu chỉnh của máy 4 điểm (GetNewMeas).
+/// Bản gốc có 4 mục: Float Ribbon 1.0 / 4x4 0.9981 / 12x12 0.9997 / 3x3 0.9966.
+/// Theo yêu cầu chỉ còn một mục "10cm x 10cm", dùng hệ số của mẫu 4x4 inch (≈ 10.2 cm).
+pub const SAMPLE_SIZES: [(&str, f64); 1] = [("10cm x 10cm", 0.9981)];
 
-pub fn sample_size_index(name: &str) -> Option<usize> {
-    SAMPLE_SIZES.iter().position(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
+/// Mọi test đều dùng mục duy nhất "10cm x 10cm".
+pub fn sample_size_index(_name: &str) -> Option<usize> {
+    Some(0)
 }
 
 /// Các test không cần nhập Run Number / Run Minute để bắt đầu (BeginTestCheck).
@@ -169,8 +171,8 @@ mod tests {
         let c = Catalog::embedded();
         // Số dòng đếm được từ IL của chương trình gốc
         assert_eq!(c.nagy.lines.len(), 5);
-        assert_eq!(c.nagy.products.len(), 11);
-        assert_eq!(c.nagy.product_tests.len(), 12);
+        assert_eq!(c.nagy.products.len(), 12); // 11 của bản gốc + TZ18
+        assert_eq!(c.nagy.product_tests.len(), 14);
         assert_eq!(c.nagy.tests.len(), 3);
         assert_eq!(c.nagy.test_items.len(), 9);
         assert_eq!(c.four_point.lines.len(), 9);
@@ -184,6 +186,7 @@ mod tests {
     fn nagy_five_points() {
         let c = Catalog::embedded();
         assert_eq!(c.nagy.tests_for_product("T203"), vec!["5 Points", "3 Points"]);
+        assert_eq!(c.nagy.tests_for_product("TZ18"), vec!["5 Points", "3 Points"]);
         let items = c.nagy.items_for_test("5 Points");
         let names: Vec<_> = items.iter().map(|x| x.0.as_str()).collect();
         assert_eq!(names, ["Left Edge", "Left Center", "Center", "Right Center", "Right Edge"]);
@@ -197,6 +200,6 @@ mod tests {
         assert_eq!(c.four_point.tests_for_product("TE85"), vec!["Post Heating", "30 Point 5 Zone", "Continuous Measure"]);
         assert!(c.four_point.line("OT1").unwrap().allow_host_data);
         assert_eq!(sample_size_index("Float Ribbon"), Some(0));
-        assert_eq!(sample_size_index("3x3"), Some(3));
+        assert_eq!(SAMPLE_SIZES[0].0, "10cm x 10cm");
     }
 }

@@ -17,6 +17,13 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// Mật khẩu để đổi Offset của Nagy.
+const OFFSET_PASSWORD: &str = "ZZCARROT";
+
+/// Kích thước cửa sổ như bản cũ: Setup Screen nhỏ gọn, MeasureForm rộng.
+const SETUP_SIZE: [f32; 2] = [830.0, 420.0];
+const MEASURE_SIZE: [f32; 2] = [1386.0, 600.0];
+
 fn exe_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
 }
@@ -31,14 +38,6 @@ fn tone_colors(t: Tone) -> (Color32, Color32) {
         Tone::Done => (Color32::WHITE, Color32::from_rgb(0, 128, 0)),
         Tone::Error => (Color32::WHITE, Color32::from_rgb(220, 0, 0)),
     }
-}
-
-fn boxed(ui: &mut egui::Ui, text: &str, tone: Tone, size: f32, width: f32) {
-    let (fg, bg) = tone_colors(tone);
-    egui::Frame::new().fill(bg).inner_margin(egui::Margin::symmetric(8, 6)).corner_radius(4.0).show(ui, |ui| {
-        ui.set_min_width(width);
-        ui.label(RichText::new(if text.is_empty() { " " } else { text }).color(fg).size(size).strong());
-    });
 }
 
 enum Conn {
@@ -81,7 +80,7 @@ struct Measure {
 
 enum CalibDlg {
     Poly { a: String, b: String, c: String, low: String, high: String },
-    Nagy { offset: String },
+    Nagy { offset: String, password: String },
 }
 
 struct App {
@@ -99,12 +98,16 @@ struct App {
     calib: Option<CalibDlg>,
     folder_edit: Option<String>,
     save_note: Option<(String, bool)>,
+    /// Lỗi đọc calibration.txt (chỉ hiện ở màn hình 4-Point Probe)
+    poly_warn: Option<String>,
+    /// Màn hình đang hiển thị lần vẽ trước (để đổi kích thước / tiêu đề cửa sổ)
+    shown_measure: Option<bool>,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, simulate: Option<Device>) -> App {
-        install_fonts(&cc.egui_ctx);
         cc.egui_ctx.set_visuals(egui::Visuals::light());
+        install_fonts(&cc.egui_ctx);
         let dir = exe_dir();
         let cfg_path = dir.join("fpp_config.json");
         let cfg = Config::load(&cfg_path);
@@ -125,6 +128,8 @@ impl App {
             calib: None,
             folder_edit: None,
             save_note: None,
+            poly_warn: None,
+            shown_measure: None,
         };
         app.load_poly();
         if !app.pending.items.is_empty() {
@@ -143,9 +148,7 @@ impl App {
     fn load_poly(&mut self) {
         let (p, warn) = Poly::load_or_create(&self.cfg.calibration_path());
         self.poly = p;
-        if let Some(w) = warn {
-            self.message = Some(("Calibration".into(), w));
-        }
+        self.poly_warn = warn;
     }
 
     fn device(&self) -> Option<Device> {
@@ -337,48 +340,32 @@ impl App {
 
     fn menu(&mut self, ui: &mut egui::Ui) {
         let measuring = self.measure.is_some();
+        let small = |s: &str| RichText::new(s).size(13.0);
         egui::menu::bar(ui, |ui| {
             ui.add_enabled_ui(!measuring, |ui| {
-                ui.menu_button("Save Folder", |ui| {
-                    ui.label(RichText::new(&self.cfg.save_path).monospace());
-                    if ui.button("Choose Save Folder...").clicked() {
-                        ui.close_menu();
-                        self.choose_folder();
-                    }
-                });
-                let cal_label = match self.device() {
-                    Some(Device::Nagy) => "Offset Calibration",
-                    _ => "3 Point Calibration",
+                if ui.button(small("Choose Save Folder...")).clicked() {
+                    self.choose_folder();
+                }
+                ui.label(small(&self.cfg.save_path));
+                let cal_label = match self.device().unwrap_or(self.cfg.device) {
+                    Device::Nagy => "Offset Calibration",
+                    Device::FourPoint => "3 Point Calibration",
                 };
-                ui.menu_button("Calibration", |ui| {
-                    if ui.add_enabled(self.device().is_some(), egui::Button::new(cal_label)).clicked() {
-                        ui.close_menu();
-                        self.calib = Some(match self.device() {
-                            Some(Device::Nagy) => CalibDlg::Nagy { offset: String::new() },
-                            _ => CalibDlg::Poly { a: String::new(), b: String::new(), c: String::new(), low: String::new(), high: String::new() },
-                        });
-                    }
-                });
-                let conn_label = match &self.conn {
-                    Conn::Ready { device, port, .. } => format!("Connected To: {} ({port})", device.label()),
-                    Conn::Connecting(_) => "Connecting...".into(),
-                    Conn::Failed(_) => "Connection".into(),
-                };
-                ui.menu_button(conn_label, |ui| {
-                    for d in [Device::FourPoint, Device::Nagy] {
-                        let checked = self.device() == Some(d);
-                        if ui.selectable_label(checked, d.label()).clicked() {
-                            ui.close_menu();
-                            self.start_connect(d);
+                if ui.add_enabled(self.device().is_some(), egui::Button::new(small(cal_label))).clicked() {
+                    self.calib = Some(match self.device() {
+                        Some(Device::Nagy) => CalibDlg::Nagy { offset: String::new(), password: String::new() },
+                        _ => {
+                            self.load_poly();
+                            CalibDlg::Poly { a: String::new(), b: String::new(), c: String::new(), low: String::new(), high: String::new() }
                         }
-                    }
-                });
-                ui.menu_button("CSV Format", |ui| {
-                    ui.label("File name format (choose 1 to 3):");
+                    });
+                }
+                ui.menu_button(small("CSV Format"), |ui| {
+                    ui.label(small("File name format (choose 1 to 3):"));
                     for f in FileFormat::ALL {
                         let mut on = self.cfg.file_formats.contains(&f);
-                        let example = format!("{}  ->  {}{}", f.label(), f.prefix(), example_name(self.device()));
-                        if ui.checkbox(&mut on, example).changed() {
+                        let example = format!("{}  ->  {}{}", f.label(), f.prefix(), example_name(Some(Device::Nagy)));
+                        if ui.checkbox(&mut on, small(&example)).changed() {
                             let mut v: Vec<FileFormat> = self.cfg.file_formats.iter().copied().filter(|x| *x != f).collect();
                             if on {
                                 v.push(f);
@@ -393,6 +380,27 @@ impl App {
                     }
                     ui.separator();
                     ui.label(RichText::new("Each result is written to every selected file.\nColumns are the same in all formats.").small());
+                    ui.label(RichText::new("Three-Point- / Continuous- files get the same prefix.\n4-Point Probe (Keithley) keeps its original name: yyyymmdd.csv").small().weak());
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let conn_label = match &self.conn {
+                        Conn::Ready { device, .. } => format!("Connected To: {}", device.label()),
+                        Conn::Connecting(_) => "Connecting...".into(),
+                        Conn::Failed(_) => "Not Connected".into(),
+                    };
+                    ui.menu_button(small(&conn_label), |ui| {
+                        if let Conn::Ready { model, port, .. } = &self.conn {
+                            ui.label(small(&format!("{port} {model}")));
+                            ui.separator();
+                        }
+                        for d in [Device::FourPoint, Device::Nagy] {
+                            let checked = self.device() == Some(d);
+                            if ui.selectable_label(checked, small(d.label())).clicked() {
+                                ui.close_menu();
+                                self.start_connect(d);
+                            }
+                        }
+                    });
                 });
             });
         });
@@ -420,13 +428,16 @@ impl App {
         self.load_poly();
     }
 
+    /// Màn hình Setup theo bố cục bản cũ: nhãn lớn phía trên ô nhập, danh sách test bên trái,
+    /// ba nút bên phải.
     fn setup_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let title = match self.device() {
-            Some(Device::Nagy) => "Nagy Setup Screen",
-            _ => "4-Point Probe Setup Screen",
-        };
-        ui.heading(title);
-        ui.add_space(6.0);
+        const C1: f32 = 140.0;
+        const C2: f32 = 160.0;
+        const C3: f32 = 145.0;
+        const C4: f32 = 300.0;
+        const GAP: f32 = 16.0;
+        let lbl = |s: &str| RichText::new(s).size(24.0);
+        ui.add_space(4.0);
         match &self.conn {
             Conn::Connecting(_) => {
                 ui.horizontal(|ui| {
@@ -452,103 +463,116 @@ impl App {
         let mut new_product = None;
         let mut new_test = None;
         let mut clear = false;
-        egui::Grid::new("setup").num_columns(3).spacing([14.0, 10.0]).show(ui, |ui| {
-            ui.label("Line Code");
-            egui::ComboBox::from_id_salt("line").width(180.0).selected_text(&self.setup.line).show_ui(ui, |ui| {
-                for l in &dc.lines {
-                    if ui.selectable_label(self.setup.line == l.name, if l.name.is_empty() { " " } else { &l.name }).clicked() {
-                        new_line = Some(l.name.clone());
-                    }
-                }
-            });
-            let allow = dc.line(&self.setup.line).map(|l| l.allow_host_data).unwrap_or(false);
-            ui.horizontal(|ui| {
-                if ui.add_enabled(allow && self.setup.host_rx.is_none(), egui::Button::new("Get Host Data")).clicked() {
-                    self.fetch_host_data();
-                }
-                if self.setup.host_rx.is_some() {
-                    ui.spinner();
-                }
-            });
-            ui.end_row();
+        let mut begin = false;
+        let mut host = false;
+        let allow_host = dc.line(&self.setup.line).map(|l| l.allow_host_data).unwrap_or(false);
+        let can_begin = self.can_begin();
 
-            ui.label("Product Type");
-            egui::ComboBox::from_id_salt("product").width(180.0).selected_text(&self.setup.product).show_ui(ui, |ui| {
-                for p in &dc.products {
-                    if ui.selectable_label(self.setup.product == p.name, if p.name.is_empty() { " " } else { &p.name }).clicked() {
-                        new_product = Some(p.name.clone());
-                    }
-                }
-            });
-            ui.label(RichText::new(&self.setup.host_product).color(Color32::DARK_BLUE));
-            ui.end_row();
-
-            ui.label("Test Type");
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_min_size(egui::vec2(260.0, 90.0));
-                egui::ScrollArea::vertical().id_salt("tests").max_height(130.0).show(ui, |ui| {
-                    ui.set_min_width(250.0);
-                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                    for t in &self.setup.tests {
-                        if ui.selectable_label(self.setup.test.as_deref() == Some(t), t).clicked() {
-                            new_test = Some(t.clone());
+        // Hàng 1: Line Code | Run Number | Run Minute | No. of Meas per Sample
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            ui.vertical(|ui| {
+                ui.set_width(C1);
+                ui.label(lbl("Line Code"));
+                egui::ComboBox::from_id_salt("line").width(C1 - 10.0).selected_text(&self.setup.line).show_ui(ui, |ui| {
+                    for l in &dc.lines {
+                        if ui.selectable_label(self.setup.line == l.name, if l.name.is_empty() { " " } else { &l.name }).clicked() {
+                            new_line = Some(l.name.clone());
                         }
                     }
+                });
+            });
+            ui.vertical(|ui| {
+                ui.set_width(C2);
+                ui.label(lbl("Run Number"));
+                ui.add(egui::TextEdit::singleline(&mut self.setup.run_number).desired_width(C2).font(egui::TextStyle::Heading));
+            });
+            ui.vertical(|ui| {
+                ui.set_width(C3);
+                ui.label(lbl("Run Minute"));
+                ui.add(egui::TextEdit::singleline(&mut self.setup.run_minute).desired_width(C3).font(egui::TextStyle::Heading));
+            });
+            ui.vertical(|ui| {
+                ui.set_width(C4);
+                ui.label(lbl("No. of Meas per Sample"));
+                let mut n = self.setup.meas_per_sample.clone();
+                ui.add_enabled(false, egui::TextEdit::singleline(&mut n).desired_width(70.0).horizontal_align(egui::Align::Center).font(egui::TextStyle::Heading));
+            });
+        });
+        ui.add_space(8.0);
+
+        // Hàng 2: Product Type ......... Sample Size
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            ui.vertical(|ui| {
+                ui.set_width(C1 + GAP + C2 + GAP + C3);
+                ui.label(lbl("Product Type"));
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("product").width(C1 - 10.0).selected_text(&self.setup.product).show_ui(ui, |ui| {
+                        for p in &dc.products {
+                            if ui.selectable_label(self.setup.product == p.name, if p.name.is_empty() { " " } else { &p.name }).clicked() {
+                                new_product = Some(p.name.clone());
+                            }
+                        }
+                    });
+                    if !self.setup.host_product.is_empty() {
+                        ui.label(RichText::new(&self.setup.host_product).size(13.0).color(Color32::DARK_BLUE));
+                    }
+                });
+            });
+            ui.vertical(|ui| {
+                ui.set_width(C4);
+                ui.label(lbl("Sample Size"));
+                let cur = self.setup.sample_size.and_then(|i| SAMPLE_SIZES.get(i)).map(|x| x.0).unwrap_or("");
+                egui::ComboBox::from_id_salt("ssize").width(C4 - 10.0).selected_text(cur).show_ui(ui, |ui| {
+                    for (i, (n, _)) in SAMPLE_SIZES.iter().enumerate() {
+                        ui.selectable_value(&mut self.setup.sample_size, Some(i), *n);
+                    }
+                });
+            });
+        });
+        ui.add_space(12.0);
+
+        // Hàng 3: danh sách test | Get Run Data / Clear Entries / Begin Test
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            let list_w = C1 + GAP + C2 + GAP + C3;
+            egui::Frame::new().fill(Color32::WHITE).stroke(egui::Stroke::new(1.0_f32, Color32::from_gray(160))).inner_margin(2).show(ui, |ui| {
+                ui.set_width(list_w - 4.0);
+                ui.set_height(122.0);
+                egui::ScrollArea::vertical().id_salt("tests").auto_shrink([false, false]).show(ui, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for t in &self.setup.tests {
+                            let sel = self.setup.test.as_deref() == Some(t);
+                            let text = RichText::new(t).size(22.0).color(if sel { Color32::WHITE } else { Color32::BLACK });
+                            let b = egui::Button::new(text).fill(if sel { Color32::from_rgb(0, 120, 215) } else { Color32::WHITE }).stroke(egui::Stroke::NONE).corner_radius(0.0);
+                            if ui.add(b).clicked() {
+                                new_test = Some(t.clone());
+                            }
+                        }
                     });
                 });
             });
-            ui.label("");
-            ui.end_row();
-
-            ui.label("Run Number");
-            ui.add(egui::TextEdit::singleline(&mut self.setup.run_number).desired_width(180.0));
-            ui.label("");
-            ui.end_row();
-
-            ui.label("Run Minute");
-            ui.add(egui::TextEdit::singleline(&mut self.setup.run_minute).desired_width(180.0));
-            ui.label("");
-            ui.end_row();
-
-            ui.label("No. of Meas per Sample");
-            ui.add_enabled(false, egui::TextEdit::singleline(&mut self.setup.meas_per_sample.clone()).desired_width(60.0));
-            ui.label("");
-            ui.end_row();
-
-            ui.label("Sample Size");
-            let cur = self.setup.sample_size.and_then(|i| SAMPLE_SIZES.get(i)).map(|x| x.0).unwrap_or("");
-            egui::ComboBox::from_id_salt("ssize").width(180.0).selected_text(cur).show_ui(ui, |ui| {
-                for (i, (n, _)) in SAMPLE_SIZES.iter().enumerate() {
-                    ui.selectable_value(&mut self.setup.sample_size, Some(i), *n);
-                }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                let big = |ui: &mut egui::Ui, s: &str, on: bool| {
+                    ui.add_enabled_ui(on, |ui| ui.add_sized([C4, 36.0], egui::Button::new(RichText::new(s).size(22.0)))).inner.clicked()
+                };
+                host = big(ui, "Get Run Data", allow_host && self.setup.host_rx.is_none());
+                clear = big(ui, "Clear Entries", true);
+                begin = big(ui, "Begin Test", can_begin);
             });
-            ui.label("");
-            ui.end_row();
-
-            ui.label("Device");
-            if let Conn::Ready { model, port, .. } = &self.conn {
-                ui.label(format!("{} {}", d.label(), if model.is_empty() { String::new() } else { format!("- {model}") }));
-                ui.label(RichText::new(port).weak());
-            }
-            ui.end_row();
         });
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            let begin = ui.add_enabled(self.can_begin(), egui::Button::new(RichText::new("Begin Test").size(18.0)).min_size(egui::vec2(140.0, 36.0)));
-            if begin.clicked() {
-                self.begin_test(ctx);
+        if let Some(w) = &self.poly_warn {
+            if d == Device::FourPoint {
+                ui.colored_label(Color32::from_rgb(180, 90, 0), RichText::new(w).size(12.0));
             }
-            if ui.add(egui::Button::new("Clear Entries").min_size(egui::vec2(110.0, 36.0))).clicked() {
-                clear = true;
-            }
-        });
-        ui.add_space(6.0);
-        let fmts: Vec<String> = self.cfg.file_formats.iter().map(|f| format!("{}{}", f.prefix(), example_name(Some(d)))).collect();
-        ui.label(RichText::new(format!("CSV: {}   in {}", fmts.join(", "), self.cfg.save_path)).small().weak());
-        if d == Device::Nagy {
-            ui.label(RichText::new(format!("Nagy offset: {}", fmt_num(self.cfg.offset_nagy))).small().weak());
         }
 
+        if host {
+            self.fetch_host_data();
+        }
         if let Some(l) = new_line {
             self.set_line(l);
         }
@@ -562,56 +586,93 @@ impl App {
             let line = self.setup.line.clone();
             self.setup = Setup { line, ..Default::default() };
         }
+        if begin {
+            self.begin_test(ctx);
+        }
     }
 
+    /// Màn hình đo (MeasureForm) theo bố cục bản cũ: kết quả bên trái; thông tin, số đo trực tiếp
+    /// và biểu đồ bên phải; Exit Measurement / Submit ở dưới.
     fn measure_ui(&mut self, ui: &mut egui::Ui) {
         let Some(m) = &mut self.measure else { return };
         let mut remeasure_click = None;
         let mut submit = false;
         let mut exit = false;
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(330.0);
-                ui.label(RichText::new(&m.session.info.test_name).size(20.0).strong());
-                ui.label(format!("Sample Minute: {}", m.session.info.run_minute));
-                ui.label(format!("Line {}   Run {}", m.session.info.line, m.session.info.run_number));
+        let mono = |s: &str, size: f32| RichText::new(s).family(egui::FontFamily::Monospace).size(size).strong().color(Color32::BLACK);
+        let avail = ui.available_size();
+        let bottom_h = 48.0;
+        let body_h = (avail.y - bottom_h).max(200.0);
+        let left_w = (avail.x * 0.44).max(260.0);
+        let right_w = avail.x - left_w - 12.0;
+
+        ui.horizontal_top(|ui| {
+            // Trái: danh sách kết quả
+            ui.allocate_ui_with_layout(egui::vec2(left_w, body_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.set_min_size(egui::vec2(left_w, body_h));
+                egui::ScrollArea::vertical().id_salt("results").auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                    for (i, r) in m.records.iter().enumerate() {
+                        let text = format!("{} - {}", r.point, fmt_num(round2(r.value)));
+                        let b = egui::Button::new(RichText::new(text).size(20.0).strong().color(Color32::BLACK))
+                            .fill(Color32::from_rgb(144, 238, 144))
+                            .min_size(egui::vec2(left_w - 24.0, 34.0));
+                        let enabled = !m.closing && m.confirm_remeasure.is_none() && !m.confirm_exit;
+                        if ui.add_enabled(enabled, b).on_hover_text("Click to remeasure").clicked() {
+                            remeasure_click = Some(i);
+                        }
+                    }
+                });
+            });
+            // Phải: thông tin + biểu đồ
+            ui.allocate_ui_with_layout(egui::vec2(right_w, body_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                let (live_fg, live_bg) = match m.live.1 {
+                    Tone::Idle | Tone::Connected => (Color32::BLACK, Color32::WHITE),
+                    t => tone_colors(t),
+                };
+                egui::Frame::new().fill(live_bg).inner_margin(egui::Margin::symmetric(16, 8)).show(ui, |ui| {
+                    ui.set_width(right_w - 32.0);
+                    ui.horizontal(|ui| {
+                        ui.label(mono(&m.session.info.test_name, 28.0));
+                        if m.session.device == Device::Nagy {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add_space(40.0);
+                                ui.label(mono(&format!("Offset Value: {}", fmt_num(m.session.info.offset_nagy)), 22.0));
+                            });
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(mono(&format!("Sample Minute {}", m.session.info.run_minute), 22.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let (fg, bg) = tone_colors(m.status.1);
+                            egui::Frame::new().fill(bg).inner_margin(egui::Margin::symmetric(4, 1)).show(ui, |ui| {
+                                ui.set_width(300.0);
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| ui.label(RichText::new(if m.status.0.is_empty() { " " } else { &m.status.0 }).size(18.0).color(fg)));
+                            });
+                        });
+                    });
+                    ui.label(mono(&m.sample_name, 22.0));
+                    ui.label(RichText::new("Live Reading").size(13.0).color(Color32::BLACK));
+                    ui.vertical_centered(|ui| {
+                        ui.label(mono(&m.live.0, 40.0).color(live_fg));
+                    });
+                    if let Some(e) = &m.comm_error {
+                        ui.colored_label(Color32::RED, RichText::new(e).size(13.0));
+                    }
+                });
                 ui.add_space(6.0);
-                ui.label(RichText::new(&m.sample_name).monospace().size(22.0).strong());
-                ui.add_space(4.0);
-                ui.label("Live Reading");
-                boxed(ui, &m.live.0, m.live.1, 26.0, 300.0);
-                ui.add_space(4.0);
-                boxed(ui, &m.status.0, m.status.1, 16.0, 300.0);
-                if let Some(e) = &m.comm_error {
-                    ui.colored_label(Color32::RED, e);
-                }
-            });
-            ui.separator();
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Ohms/Sq").strong());
                 let pts = chart_points(&m.session, &m.records);
-                draw_chart(ui, &pts, egui::vec2(ui.available_width().max(300.0), 250.0));
+                let h = ui.available_height().max(120.0);
+                draw_chart(ui, &pts, egui::vec2(right_w, h));
             });
         });
-        ui.separator();
-        ui.label(RichText::new("Results (click a result to remeasure it)").small().weak());
-        egui::ScrollArea::vertical().id_salt("results").max_height(ui.available_height() - 60.0).stick_to_bottom(true).show(ui, |ui| {
-            for (i, r) in m.records.iter().enumerate() {
-                let text = format!("{} - {}", r.point, fmt_num(round2(r.value)));
-                let b = egui::Button::new(RichText::new(text).size(16.0).color(Color32::BLACK)).fill(Color32::from_rgb(144, 238, 144)).min_size(egui::vec2(420.0, 28.0));
-                if ui.add_enabled(!m.closing && m.confirm_remeasure.is_none() && !m.confirm_exit, b).clicked() {
-                    remeasure_click = Some(i);
-                }
-            }
-        });
+
+        // Dưới: Exit Measurement | Submit
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(m.submit && !m.closing, egui::Button::new(RichText::new("Submit").size(18.0)).min_size(egui::vec2(140.0, 36.0))).clicked() {
-                submit = true;
-            }
-            if ui.add_enabled(!m.closing, egui::Button::new(RichText::new("Exit Measurement").size(16.0)).min_size(egui::vec2(160.0, 36.0))).clicked() {
-                exit = true;
-            }
+            ui.add_space(left_w - 30.0);
+            let btn = |ui: &mut egui::Ui, s: &str, on: bool| ui.add_enabled_ui(on, |ui| ui.add_sized([176.0, 36.0], egui::Button::new(RichText::new(s).size(20.0)))).inner.clicked();
+            exit = btn(ui, "Exit Measurement", !m.closing);
+            ui.add_space(80.0);
+            submit = btn(ui, "Submit", m.submit && !m.closing);
             if m.closing {
                 ui.spinner();
                 ui.label("Closing...");
@@ -723,9 +784,10 @@ impl App {
                         None => {}
                     }
                 }
-                CalibDlg::Nagy { offset } => {
+                CalibDlg::Nagy { offset, password } => {
                     let cur = self.cfg.offset_nagy;
                     let mut update = None;
+                    let mut wrong_pw = false;
                     modal(ctx, "Offset Calibration", |ui| {
                         egui::Grid::new("off").num_columns(3).spacing([12.0, 8.0]).show(ui, |ui| {
                             ui.label("");
@@ -736,10 +798,20 @@ impl App {
                             ui.label(fmt_num(cur));
                             ui.add(egui::TextEdit::singleline(offset).desired_width(120.0));
                             ui.end_row();
+                            ui.label("Password:");
+                            ui.label("");
+                            ui.add(egui::TextEdit::singleline(password).password(true).desired_width(120.0));
+                            ui.end_row();
                         });
                         ui.horizontal(|ui| {
-                            if ui.add_enabled(!offset.trim().is_empty(), egui::Button::new("Update")).clicked() {
-                                update = Some(offset.trim().parse::<f64>());
+                            let ready = !offset.trim().is_empty() && !password.is_empty();
+                            if ui.add_enabled(ready, egui::Button::new("Update")).clicked() {
+                                if password.as_str() == OFFSET_PASSWORD {
+                                    update = Some(offset.trim().parse::<f64>());
+                                } else {
+                                    wrong_pw = true;
+                                    password.clear();
+                                }
                             }
                             if ui.button("Exit").clicked() {
                                 close_cal = true;
@@ -753,6 +825,7 @@ impl App {
                             close_cal = true;
                         }
                         Some(_) => self.message = Some(("Calibration".into(), "Offset must be a number (use . as decimal point).".into())),
+                        None if wrong_pw => self.message = Some(("Offset Calibration".into(), "Wrong password. The offset was not changed.".into())),
                         None => {}
                     }
                 }
@@ -788,7 +861,7 @@ impl App {
 
         if let Some((t, b)) = &self.message {
             let mut close = false;
-            modal(ctx, t, |ui| {
+            msgbox(ctx, t, |ui| {
                 ui.label(b);
                 if ui.button("OK").clicked() {
                     close = true;
@@ -813,6 +886,7 @@ impl App {
                         }
                         self.conn = Conn::Ready { device: c.device, link: Some(c.link), model: c.model, port: c.port };
                         self.reset_setup();
+                        self.shown_measure = None; // cập nhật tiêu đề cửa sổ theo máy
                     }
                     Err(e) => self.conn = Conn::Failed(e),
                 }
@@ -891,6 +965,17 @@ fn example_name(d: Option<Device>) -> String {
     }
 }
 
+/// Hộp thông báo: ID riêng để không trùng với hộp thoại cùng tiêu đề đang mở.
+fn msgbox(ctx: &egui::Context, title: &str, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Window::new(title)
+        .id(egui::Id::new("msgbox"))
+        .collapsible(false)
+        .resizable(false)
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, add);
+}
+
 fn modal(ctx: &egui::Context, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, add);
 }
@@ -922,6 +1007,10 @@ fn draw_chart(ui: &mut egui::Ui, pts: &[(f64, f64)], size: egui::Vec2) {
     let axis = egui::Stroke::new(1.0_f32, Color32::GRAY);
     painter.line_segment([plot.left_bottom(), plot.right_bottom()], axis);
     painter.line_segment([plot.left_top(), plot.left_bottom()], axis);
+    // Chú thích như biểu đồ cũ
+    let lg = egui::pos2(rect.right() - 110.0, rect.top() + 22.0);
+    painter.line_segment([lg, lg + egui::vec2(22.0, 0.0)], egui::Stroke::new(2.0_f32, Color32::from_rgb(30, 144, 255)));
+    painter.text(lg + egui::vec2(28.0, 0.0), egui::Align2::LEFT_CENTER, "Ohms/Sq", egui::FontId::proportional(12.0), Color32::BLACK);
     if pts.is_empty() {
         return;
     }
@@ -951,7 +1040,7 @@ fn draw_chart(ui: &mut egui::Ui, pts: &[(f64, f64)], size: egui::Vec2) {
     painter.text(egui::pos2(plot.left(), plot.bottom() + 4.0), egui::Align2::LEFT_TOP, fmt_num(x0), font.clone(), Color32::DARK_GRAY);
     painter.text(egui::pos2(plot.right(), plot.bottom() + 4.0), egui::Align2::RIGHT_TOP, fmt_num(x1), font, Color32::DARK_GRAY);
     let line: Vec<egui::Pos2> = pts.iter().map(|&(x, y)| to(x, y)).collect();
-    let blue = Color32::from_rgb(65, 105, 225);
+    let blue = Color32::from_rgb(30, 144, 255);
     for w in line.windows(2) {
         painter.line_segment([w[0], w[1]], egui::Stroke::new(2.0_f32, blue));
     }
@@ -961,22 +1050,60 @@ fn draw_chart(ui: &mut egui::Ui, pts: &[(f64, f64)], size: egui::Vec2) {
 }
 
 fn install_fonts(ctx: &egui::Context) {
-    // Dùng font Windows (có đủ dấu tiếng Việt) nếu có
-    for path in ["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\arial.ttf"] {
-        if let Ok(bytes) = std::fs::read(path) {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert("sys".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-            fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "sys".into());
-            ctx.set_fonts(fonts);
-            return;
+    // Font của bản cũ: Microsoft Sans Serif (chữ thường) và Courier New Bold (màn hình đo)
+    let mut fonts = egui::FontDefinitions::default();
+    let mut add = |key: &str, paths: &[&str], fam: egui::FontFamily| {
+        for p in paths {
+            if let Ok(bytes) = std::fs::read(p) {
+                fonts.font_data.insert(key.into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+                fonts.families.entry(fam).or_default().insert(0, key.into());
+                return;
+            }
         }
-    }
+    };
+    add("sans", &["C:\\Windows\\Fonts\\micross.ttf", "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\segoeui.ttf"], egui::FontFamily::Proportional);
+    add("mono", &["C:\\Windows\\Fonts\\courbd.ttf", "C:\\Windows\\Fonts\\cour.ttf"], egui::FontFamily::Monospace);
+    ctx.set_fonts(fonts);
+    ctx.style_mut(|st| {
+        use egui::{FontFamily::Proportional, FontId, TextStyle};
+        st.text_styles.insert(TextStyle::Body, FontId::new(16.0, Proportional));
+        st.text_styles.insert(TextStyle::Button, FontId::new(22.0, Proportional));
+        st.text_styles.insert(TextStyle::Heading, FontId::new(22.0, Proportional));
+        st.text_styles.insert(TextStyle::Small, FontId::new(12.0, Proportional));
+        st.spacing.button_padding = egui::vec2(6.0, 2.0);
+        st.spacing.interact_size.y = 30.0;
+        st.visuals.widgets.inactive.weak_bg_fill = Color32::from_gray(225);
+        // viền ô nhập / nút như WinForms
+        let border = egui::Stroke::new(1.0_f32, Color32::from_gray(150));
+        st.visuals.widgets.inactive.bg_stroke = border;
+        st.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, Color32::from_gray(190));
+        st.visuals.extreme_bg_color = Color32::WHITE;
+        st.visuals.panel_fill = Color32::from_gray(240);
+    });
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_background();
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu(ui));
+        let measuring = self.measure.is_some();
+        if self.shown_measure != Some(measuring) {
+            self.shown_measure = Some(measuring);
+            let sim = if self.simulate.is_some() { " (SIMULATION)" } else { "" };
+            let (size, title) = if measuring {
+                (MEASURE_SIZE, format!("MeasureForm{sim}"))
+            } else {
+                let t = match self.device().unwrap_or(self.cfg.device) {
+                    Device::Nagy => "Nagy Setup Screen",
+                    Device::FourPoint => "4-Point Probe Setup Screen",
+                };
+                (SETUP_SIZE, format!("{t}{sim}"))
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(size[0], size[1])));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
+        if !measuring {
+            egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu(ui));
+        }
         if self.measure.is_none() {
             if let Some((note, warn)) = &self.save_note {
                 let (note, warn) = (note.clone(), *warn);
@@ -1028,7 +1155,7 @@ fn main() -> eframe::Result<()> {
     });
     let title = if simulate.is_some() { "FourPointProbe (SIMULATION)" } else { "FourPointProbe" };
     let opts = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([980.0, 700.0]).with_min_inner_size([760.0, 560.0]).with_title(title),
+        viewport: egui::ViewportBuilder::default().with_inner_size(SETUP_SIZE).with_min_inner_size([760.0, 380.0]).with_title(title),
         ..Default::default()
     };
     eframe::run_native(title, opts, Box::new(move |cc| Ok(Box::new(App::new(cc, simulate)))))

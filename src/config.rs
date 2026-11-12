@@ -90,8 +90,17 @@ impl Default for Poly {
 }
 
 impl Poly {
+    /// Đọc "A B C Low High". Chấp nhận BOM UTF-8 (bản VB gốc ghi file có BOM),
+    /// xuống dòng / tab / ";" làm dấu phân cách, và dấu phẩy thập phân ("0,5").
     pub fn parse(s: &str) -> Option<Poly> {
-        let v: Vec<f64> = s.split_whitespace().map(|x| x.trim().parse::<f64>()).collect::<Result<_, _>>().ok()?;
+        let s = s.trim_start_matches('\u{feff}');
+        let v: Vec<f64> = s
+            .split(|c: char| c.is_whitespace() || c == ';')
+            .filter(|x| !x.is_empty())
+            .map(|x| if x.contains(',') && !x.contains('.') { x.replace(',', ".") } else { x.to_string() })
+            .map(|x| x.parse::<f64>())
+            .collect::<Result<_, _>>()
+            .ok()?;
         if v.len() < 5 {
             return None;
         }
@@ -149,6 +158,10 @@ mod tests {
         assert!((q.apply(50.0) - (2.5 + 47.5 + 0.2)).abs() < 1e-9);
         assert_eq!(q.apply(5.0), 5.0);
         assert_eq!(Poly::parse(&q.to_file_string()).unwrap(), q);
+        // file do bản VB gốc ghi: có BOM UTF-8
+        assert_eq!(Poly::parse("\u{feff}0 1 0 0 600"), Some(Poly::default()));
+        assert_eq!(Poly::parse("0\r\n1\r\n0\r\n0\r\n600\r\n"), Some(Poly::default()));
+        assert_eq!(Poly::parse("0,5 1 0 0 600").unwrap().a, 0.5);
     }
 
     #[test]

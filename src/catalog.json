@@ -42,6 +42,12 @@
     "spec_target": 18.0
    },
    {
+    "name": "TZ18",
+    "spec_upper": 0.0,
+    "spec_lower": 0.0,
+    "spec_target": 0.0
+   },
+   {
     "name": "TE50",
     "spec_upper": 55.0,
     "spec_lower": 45.0,
@@ -108,6 +114,16 @@
    },
    {
     "product": "T185",
+    "order": 1,
+    "test": "3 Points"
+   },
+   {
+    "product": "TZ18",
+    "order": 0,
+    "test": "5 Points"
+   },
+   {
+    "product": "TZ18",
     "order": 1,
     "test": "3 Points"
    },

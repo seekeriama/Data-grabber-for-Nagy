@@ -138,9 +138,9 @@ fn fpp_five_points_ut_method() {
     let link = FakeKeithley::new(truth.clone());
     let mut h = Harness::start(session(Device::FourPoint, "T155", "5 Points", 0.0), Box::new(link));
     h.pump_until("5 records", |h| h.records.len() == 5 && h.submit);
-    // "5 Points" của 4PP dùng Sample Size "Float Ribbon" -> hệ số 1.0
+    // Sample Size duy nhất "10cm x 10cm" -> hệ số 0.9981
     for (r, t) in h.records.iter().zip(&truth) {
-        assert!((r.value - t).abs() / t < 0.003, "{} vs {}", r.value, t);
+        assert!((r.value - t * 0.9981).abs() / t < 0.003, "{} vs {}", r.value, t);
     }
     let link = h.stop();
     let _ = link; // cổng được trả lại cho màn hình Setup
@@ -163,7 +163,7 @@ fn fpp_four_inch_uses_average_and_sample_size_factor() {
     let k = FakeKeithley::new(vec![10.0]);
     let mut s = session(Device::FourPoint, "ENAC", "4 Inch Ohms", 0.0);
     s.items.truncate(2);
-    s.sample_size = Some(1); // 4x4 -> 0.9981
+    s.sample_size = Some(0); // 10cm x 10cm -> 0.9981
     let mut h = Harness::start(s, Box::new(k));
     // không quét I–V nên giả lập không tự "nhấc đầu đo": chỉ cần điểm đầu
     h.pump_until("1 record", |h| !h.records.is_empty());
