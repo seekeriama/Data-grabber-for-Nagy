@@ -177,26 +177,38 @@ pub fn append(w: &PendingWrite) -> std::io::Result<()> {
     f.flush()
 }
 
+pub const PENDING_NAME: &str = "Pending";
+
 /// Hàng chờ các lần ghi thất bại (thường do file đang mở trong Excel).
-/// Lưu xuống đĩa để không mất dữ liệu khi tắt chương trình.
-#[derive(Debug, Default)]
+/// Lưu vào kho có chữ ký (không tạo file) để không mất dữ liệu khi tắt chương trình,
+/// và không ai sửa được số đo đang chờ.
+#[derive(Default)]
 pub struct PendingStore {
     pub items: Vec<PendingWrite>,
-    pub store_path: Option<PathBuf>,
+    pub store: Option<std::sync::Arc<crate::secure::SecureStore>>,
 }
 
 impl PendingStore {
-    pub fn load(path: &Path) -> PendingStore {
-        let items = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        PendingStore { items, store_path: Some(path.to_path_buf()) }
+    /// Trả kèm cảnh báo nếu dữ liệu chờ đã bị sửa (khi đó bị bỏ).
+    pub fn load(store: std::sync::Arc<crate::secure::SecureStore>) -> (PendingStore, Option<String>) {
+        let (items, warn) = match store.load(PENDING_NAME) {
+            Ok(Some(b)) => (serde_json::from_slice(&b).unwrap_or_default(), None),
+            Ok(None) => (vec![], None),
+            Err(crate::secure::LoadError::Tampered) => {
+                let _ = store.remove(PENDING_NAME);
+                (vec![], Some("Unsaved CSV data from the last session was changed outside this program and has been discarded.".to_string()))
+            }
+            Err(crate::secure::LoadError::Io(e)) => (vec![], Some(format!("Could not read unsaved CSV data: {e}"))),
+        };
+        (PendingStore { items, store: Some(store) }, warn)
     }
 
     fn persist(&self) {
-        if let Some(p) = &self.store_path {
+        if let Some(st) = &self.store {
             if self.items.is_empty() {
-                let _ = std::fs::remove_file(p);
-            } else if let Ok(s) = serde_json::to_string_pretty(&self.items) {
-                let _ = std::fs::write(p, s);
+                let _ = st.remove(PENDING_NAME);
+            } else if let Ok(b) = serde_json::to_vec(&self.items) {
+                let _ = st.save(PENDING_NAME, &b);
             }
         }
     }
@@ -333,32 +345,53 @@ mod tests {
     #[test]
     fn pending_when_locked_then_retry() {
         let d = tmpdir("pend");
-        let store = d.join("pending.json");
+        let mem = crate::secure::MemoryStore::default();
+        let store = std::sync::Arc::new(crate::secure::SecureStore::new(Box::new(mem.clone())));
         // Giả lập file bị khóa: đặt một THƯ MỤC trùng tên file đích
         let blocker = d.join("ERS_Five-Points-20261017.csv");
         std::fs::create_dir_all(&blocker).unwrap();
         let info = RunInfo { line: "VG1".into(), run_number: "1".into(), run_minute: "2".into(), test_name: "5 Points".into(), offset_nagy: 0.0 };
         let b = nagy_block(&d, &info, &five_point_records(), t(1, 0, 0)).unwrap();
-        let mut ps = PendingStore::load(&store);
+        let mut ps = PendingStore::load(store.clone()).0;
         let (ok, failed) = ps.write_block(&b, &[FileFormat::Default, FileFormat::Ers]);
         assert_eq!(ok.len(), 1);
         assert_eq!(failed.len(), 1);
-        assert!(store.exists(), "hàng chờ phải được lưu xuống đĩa");
+        assert!(mem.map.lock().unwrap().contains_key(PENDING_NAME), "hàng chờ phải được lưu");
         // lượt sau vào cùng file cũng phải xếp hàng sau
         let (_, failed2) = ps.write_block(&b, &[FileFormat::Ers]);
         assert_eq!(failed2.len(), 1);
         assert_eq!(ps.items.len(), 2);
         // mở lại chương trình: đọc được hàng chờ
-        let mut ps2 = PendingStore::load(&store);
+        let mut ps2 = PendingStore::load(store.clone()).0;
         assert_eq!(ps2.items.len(), 2);
         assert!(ps2.retry().is_empty());
         std::fs::remove_dir(&blocker).unwrap();
         let done = ps2.retry();
         assert_eq!(done.len(), 2);
         assert!(ps2.items.is_empty());
-        assert!(!store.exists());
+        assert!(!mem.map.lock().unwrap().contains_key(PENDING_NAME));
         let s = std::fs::read_to_string(&blocker).unwrap();
         assert_eq!(s.matches("ProductLine").count(), 1);
         assert_eq!(s.lines().count(), 3);
+    }
+
+    #[test]
+    fn pending_tampered_is_discarded() {
+        let d = tmpdir("pendt");
+        std::fs::create_dir_all(d.join("Five-Points-20261017.csv")).unwrap(); // khóa file đích
+        let mem = crate::secure::MemoryStore::default();
+        let store = std::sync::Arc::new(crate::secure::SecureStore::new(Box::new(mem.clone())));
+        let info = RunInfo { line: "VG1".into(), run_number: "1".into(), run_minute: "2".into(), test_name: "5 Points".into(), offset_nagy: 0.0 };
+        let b = nagy_block(&d, &info, &five_point_records(), t(1, 0, 0)).unwrap();
+        PendingStore::load(store.clone()).0.write_block(&b, &[FileFormat::Default]);
+        // sửa số đo đang chờ: 17.02 -> 18.02
+        {
+            let mut m = mem.map.lock().unwrap();
+            let v = m.get_mut(PENDING_NAME).unwrap();
+            *v = String::from_utf8_lossy(v).replace("17.02", "18.02").into_bytes();
+        }
+        let (ps, warn) = PendingStore::load(store);
+        assert!(ps.items.is_empty());
+        assert!(warn.unwrap().contains("discarded"));
     }
 }

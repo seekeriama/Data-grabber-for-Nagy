@@ -1,8 +1,8 @@
 //! Danh mục Line / Product / Test / điểm đo.
 //!
 //! Dữ liệu lấy nguyên từ hai hàm `Load4PPDataSet` và `LoadNagyDataSet` của chương trình gốc
-//! (ghi cứng trong code). File `catalog.json` được nhúng vào exe; nếu đặt một file
-//! `fpp_catalog.json` cạnh exe thì chương trình dùng file đó (để thêm sản phẩm không cần build lại).
+//! (ghi cứng trong code). File `catalog.json` được nhúng vào exe lúc build; chương trình
+//! không đọc danh mục từ file bên ngoài (muốn thêm sản phẩm thì sửa catalog.json rồi build lại).
 
 use serde::{Deserialize, Serialize};
 
@@ -106,19 +106,6 @@ pub const CONTINUOUS: &str = "Continuous Measure";
 impl Catalog {
     pub fn embedded() -> Catalog {
         serde_json::from_str(EMBEDDED_JSON).expect("catalog.json nhúng sẵn bị lỗi")
-    }
-
-    /// Đọc `fpp_catalog.json` cạnh exe nếu có, ngược lại dùng bản nhúng.
-    pub fn load(override_path: Option<&std::path::Path>) -> (Catalog, Option<String>) {
-        if let Some(p) = override_path {
-            if p.exists() {
-                match std::fs::read_to_string(p).map_err(|e| e.to_string()).and_then(|s| serde_json::from_str::<Catalog>(&s).map_err(|e| e.to_string())) {
-                    Ok(c) => return (c, None),
-                    Err(e) => return (Catalog::embedded(), Some(format!("Không đọc được {}: {e}. Dùng danh mục mặc định.", p.display()))),
-                }
-            }
-        }
-        (Catalog::embedded(), None)
     }
 
     pub fn for_device(&self, d: Device) -> &DeviceCatalog {

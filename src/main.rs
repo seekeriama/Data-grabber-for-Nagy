@@ -11,13 +11,15 @@ use fpp::csvout::{fpp_block, nagy_block, FileFormat, PendingStore, Record, RunIn
 use fpp::engine::{self, Cmd, Evt, Session, Tone};
 use fpp::hostdata::{self, HostData};
 use fpp::link::Link;
+use fpp::secure::{MemoryStore, SecureStore};
+use std::sync::Arc;
 use fpp::util::{fmt_num, round2};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Mật khẩu để đổi Offset của Nagy.
+/// Mật khẩu để đổi Offset của Nagy và hệ số 3 Point Calibration của 4PP.
 const OFFSET_PASSWORD: &str = "ZZCARROT";
 
 /// Kích thước cửa sổ như bản cũ: Setup Screen nhỏ gọn, MeasureForm rộng.
@@ -26,10 +28,6 @@ const SETUP_SIZE: [f32; 2] = [830.0, 420.0];
 const RESULTS_W: f32 = 300.0;
 const INFO_W: f32 = 755.0;
 const MEASURE_SIZE: [f32; 2] = [RESULTS_W + 12.0 + INFO_W + 16.0, 600.0];
-
-fn exe_dir() -> PathBuf {
-    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
-}
 
 fn tone_colors(t: Tone) -> (Color32, Color32) {
     // (chữ, nền)
@@ -82,15 +80,15 @@ struct Measure {
 }
 
 enum CalibDlg {
-    Poly { a: String, b: String, c: String, low: String, high: String },
+    Poly { a: String, b: String, c: String, low: String, high: String, password: String },
     Nagy { offset: String, password: String },
 }
 
 struct App {
     cfg: Config,
-    cfg_path: PathBuf,
+    /// Kho cài đặt có chữ ký (Registry trên Windows), không tạo file
+    store: Arc<SecureStore>,
     catalog: Catalog,
-    poly: Poly,
     simulate: Option<Device>,
     conn: Conn,
     setup: Setup,
@@ -101,8 +99,6 @@ struct App {
     calib: Option<CalibDlg>,
     folder_edit: Option<String>,
     save_note: Option<(String, bool)>,
-    /// Lỗi đọc calibration.txt (chỉ hiện ở màn hình 4-Point Probe)
-    poly_warn: Option<String>,
     /// Màn hình đang hiển thị lần vẽ trước (để đổi kích thước / tiêu đề cửa sổ)
     shown_measure: Option<bool>,
 }
@@ -111,30 +107,33 @@ impl App {
     fn new(cc: &eframe::CreationContext<'_>, simulate: Option<Device>) -> App {
         cc.egui_ctx.set_visuals(egui::Visuals::light());
         install_fonts(&cc.egui_ctx);
-        let dir = exe_dir();
-        let cfg_path = dir.join("fpp_config.json");
-        let cfg = Config::load(&cfg_path);
-        let (catalog, cat_warn) = Catalog::load(Some(&dir.join("fpp_catalog.json")));
-        let pending = PendingStore::load(&dir.join("fpp_pending.json"));
+        // Chạy thử: cài đặt riêng trong bộ nhớ và ghi CSV vào thư mục tạm,
+        // để không đụng tới cài đặt thật và thư mục dữ liệu thật.
+        let store = Arc::new(if simulate.is_some() { SecureStore::new(Box::new(MemoryStore::default())) } else { SecureStore::platform_default() });
+        let (mut cfg, cfg_warn) = Config::load(&store);
+        if simulate.is_some() {
+            let tmp = std::env::temp_dir().join("FourPointProbe-SIM");
+            cfg.save_path = format!("{}{}", tmp.join("Data").display(), std::path::MAIN_SEPARATOR);
+            cfg.records_path = format!("{}{}", tmp.join("Records").display(), std::path::MAIN_SEPARATOR);
+        }
+        let (pending, pend_warn) = PendingStore::load(store.clone());
+        let warn: Vec<String> = [cfg_warn, pend_warn].into_iter().flatten().collect();
         let mut app = App {
-            poly: Poly::default(),
             cfg,
-            cfg_path,
-            catalog,
+            store,
+            catalog: Catalog::embedded(),
             simulate,
             conn: Conn::Failed(String::new()),
             setup: Setup::default(),
             measure: None,
             pending,
             last_retry: Instant::now(),
-            message: cat_warn.map(|w| ("Catalog".to_string(), w)),
+            message: if warn.is_empty() { None } else { Some(("Settings".to_string(), warn.join("\n\n"))) },
             calib: None,
             folder_edit: None,
             save_note: None,
-            poly_warn: None,
             shown_measure: None,
         };
-        app.load_poly();
         if !app.pending.items.is_empty() {
             app.save_note = Some((format!("{} CSV write(s) waiting from last session; retrying...", app.pending.items.len()), true));
         }
@@ -143,15 +142,9 @@ impl App {
     }
 
     fn save_cfg(&mut self) {
-        if let Err(e) = self.cfg.save(&self.cfg_path) {
-            self.message = Some(("Settings".into(), format!("Could not save settings to {}:\n{e}", self.cfg_path.display())));
+        if let Err(e) = self.cfg.save(&self.store) {
+            self.message = Some(("Settings".into(), format!("Could not save settings to {}:\n{e}", self.store.describe())));
         }
-    }
-
-    fn load_poly(&mut self) {
-        let (p, warn) = Poly::load_or_create(&self.cfg.calibration_path());
-        self.poly = p;
-        self.poly_warn = warn;
     }
 
     fn device(&self) -> Option<Device> {
@@ -279,7 +272,7 @@ impl App {
             items: s.items.clone(),
             sample_size: s.sample_size,
             upper_spec: s.upper_spec,
-            poly: self.poly,
+            poly: self.cfg.poly,
         };
         let (tx, crx) = channel();
         let (etx, rx) = channel();
@@ -357,10 +350,7 @@ impl App {
                 if ui.add_enabled(self.device().is_some(), egui::Button::new(small(cal_label))).clicked() {
                     self.calib = Some(match self.device() {
                         Some(Device::Nagy) => CalibDlg::Nagy { offset: String::new(), password: String::new() },
-                        _ => {
-                            self.load_poly();
-                            CalibDlg::Poly { a: String::new(), b: String::new(), c: String::new(), low: String::new(), high: String::new() }
-                        }
+                        _ => CalibDlg::Poly { a: String::new(), b: String::new(), c: String::new(), low: String::new(), high: String::new(), password: String::new() },
                     });
                 }
                 ui.menu_button(small("CSV Format"), |ui| {
@@ -428,7 +418,6 @@ impl App {
         }
         self.cfg.save_path = p;
         self.save_cfg();
-        self.load_poly();
     }
 
     /// Màn hình Setup theo bố cục bản cũ: nhãn lớn phía trên ô nhập, danh sách test bên trái,
@@ -567,11 +556,6 @@ impl App {
                 begin = big(ui, "Begin Test", can_begin);
             });
         });
-        if let Some(w) = &self.poly_warn {
-            if d == Device::FourPoint {
-                ui.colored_label(Color32::from_rgb(180, 90, 0), RichText::new(w).size(12.0));
-            }
-        }
 
         if host {
             self.fetch_host_data();
@@ -745,9 +729,10 @@ impl App {
         let mut close_cal = false;
         if let Some(c) = &mut self.calib {
             match c {
-                CalibDlg::Poly { a, b, c: cc, low, high } => {
-                    let poly = self.poly;
+                CalibDlg::Poly { a, b, c: cc, low, high, password } => {
+                    let poly = self.cfg.poly;
                     let mut update = None;
+                    let mut wrong_pw = false;
                     modal(ctx, "3 Point Calibration", |ui| {
                         egui::Grid::new("poly").num_columns(3).spacing([12.0, 8.0]).show(ui, |ui| {
                             ui.label("");
@@ -760,12 +745,21 @@ impl App {
                                 ui.add(egui::TextEdit::singleline(txt).desired_width(120.0));
                                 ui.end_row();
                             }
+                            ui.label("Password:");
+                            ui.label("");
+                            ui.add(egui::TextEdit::singleline(password).password(true).desired_width(120.0));
+                            ui.end_row();
                         });
-                        let all = [&*a, &*b, &*cc, &*low, &*high].iter().all(|s| !s.trim().is_empty());
+                        let all = [&*a, &*b, &*cc, &*low, &*high].iter().all(|s| !s.trim().is_empty()) && !password.is_empty();
                         ui.horizontal(|ui| {
                             if ui.add_enabled(all, egui::Button::new("Update")).clicked() {
-                                let v: Result<Vec<f64>, _> = [&*a, &*b, &*cc, &*low, &*high].iter().map(|s| s.trim().parse::<f64>()).collect();
-                                update = Some(v);
+                                if password.as_str() == OFFSET_PASSWORD {
+                                    let v: Result<Vec<f64>, _> = [&*a, &*b, &*cc, &*low, &*high].iter().map(|s| s.trim().parse::<f64>()).collect();
+                                    update = Some(v);
+                                } else {
+                                    wrong_pw = true;
+                                    password.clear();
+                                }
                             }
                             if ui.button("Exit").clicked() {
                                 close_cal = true;
@@ -774,16 +768,12 @@ impl App {
                     });
                     match update {
                         Some(Ok(v)) => {
-                            let p = Poly { a: v[0], b: v[1], c: v[2], low: v[3], high: v[4] };
-                            match p.save(&self.cfg.calibration_path()) {
-                                Ok(()) => {
-                                    self.poly = p;
-                                    close_cal = true;
-                                }
-                                Err(e) => self.message = Some(("Calibration".into(), format!("Could not write calibration.txt: {e}"))),
-                            }
+                            self.cfg.poly = Poly { a: v[0], b: v[1], c: v[2], low: v[3], high: v[4] };
+                            self.save_cfg();
+                            close_cal = true;
                         }
                         Some(Err(_)) => self.message = Some(("Calibration".into(), "All values must be numbers (use . as decimal point).".into())),
+                        None if wrong_pw => self.message = Some(("3 Point Calibration".into(), "Wrong password. The calibration was not changed.".into())),
                         None => {}
                     }
                 }
@@ -1146,7 +1136,7 @@ impl eframe::App for App {
                 }
             }
         }
-        let _ = self.cfg.save(&self.cfg_path);
+        let _ = self.cfg.save(&self.store);
     }
 }
 

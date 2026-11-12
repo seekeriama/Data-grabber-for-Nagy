@@ -11,5 +11,6 @@ pub mod hostdata;
 pub mod keithley;
 pub mod link;
 pub mod nagy;
+pub mod secure;
 pub mod sim;
 pub mod util;

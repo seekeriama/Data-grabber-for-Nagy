@@ -52,37 +52,41 @@ VG1,17/10/2026 19:46:33,1981,29,-0.4,17.02,17.31,17.3,17.25,16.54
 ```
 RunMinute ghi dạng số (không có `="..."`).
 
-**File đang mở trong Excel:** Windows khóa file nên không ghi được. Chương trình báo, giữ dữ liệu lại (lưu cả xuống `fpp_pending.json` để không mất khi tắt máy) và tự ghi bù ngay khi file được đóng. Các file khác vẫn được ghi bình thường.
+**File đang mở trong Excel:** Windows khóa file nên không ghi được. Chương trình báo, giữ dữ liệu lại (lưu có chữ ký trong Registry để không mất khi tắt máy) và tự ghi bù ngay khi file được đóng. Các file khác vẫn được ghi bình thường.
 
-## Các file cạnh exe
+## Cài đặt được lưu ở đâu (không có file cấu hình)
 
-| File | Nội dung |
-|---|---|
-| `fpp_config.json` | Thư mục lưu, Line chọn lần cuối, máy dùng lần cuối, **Offset Nagy**, định dạng CSV. Tự tạo. |
-| `fpp_pending.json` | Dữ liệu đang chờ ghi bù (chỉ có khi có file bị khóa). |
-| `fpp_catalog.json` | Không bắt buộc. Nếu có, dùng thay danh mục Line / Product / Test nhúng sẵn (xem `src/catalog.json`), để thêm sản phẩm không cần build lại. |
+Chương trình **không tạo file nào cạnh exe**. Cài đặt (thư mục lưu, Line, máy dùng lần trước, **Offset Nagy**, hệ số **3 Point Calibration**, định dạng CSV) nằm trong Registry của Windows:
 
-`calibration.txt` (hệ số đa thức 4PP `A B C Low High`) vẫn nằm trong thư mục lưu như bản gốc, nên dùng lại được file cũ.
+```
+HKEY_CURRENT_USER\Software\Pilkington\FourPointProbe   (giá trị Settings, Pending)
+```
 
-**Lần đầu chạy trên máy đang dùng bản cũ:** bản gốc lưu cài đặt trong hồ sơ Windows của người dùng nên không chuyển sang được. Cần làm lại:
-1. **Save Folder → Choose Save Folder...** (mặc định `C:\Data\`).
-2. Với Nagy: menu **Offset Calibration**, nhập offset đang dùng (ví dụ `-0.4`) và mật khẩu.
-3. **CSV Format**: chọn Default / ERS / Sequoia.
+- Mỗi giá trị có **chữ ký điện tử (HMAC-SHA256)**. Sửa trực tiếp bằng regedit làm chữ ký sai: chương trình phát hiện, bỏ toàn bộ cài đặt đó (Offset về 0) và báo người dùng nhập lại qua giao diện, có mật khẩu.
+- Đổi Offset Nagy và 3 Point Calibration đều cần mật khẩu `ZZCARROT` (hằng số `OFFSET_PASSWORD` trong `src/main.rs`).
+- `Pending`: dữ liệu đo chưa ghi được vì file CSV đang mở trong Excel. Cũng có chữ ký, nên không ai sửa được số đo đang chờ. Nếu bị sửa, phần dữ liệu đó bị bỏ và chương trình báo.
+- Danh mục Line / Product / Test nằm trong exe (`src/catalog.json` nhúng lúc build). Muốn thêm sản phẩm thì sửa file đó rồi build lại.
+- Cài đặt gắn với tài khoản Windows đang đăng nhập. Máy dùng chung một tài khoản thì không ảnh hưởng.
+- Chế độ `--simulate` dùng cài đặt riêng trong bộ nhớ và ghi CSV vào thư mục tạm (`%TEMP%\FourPointProbe-SIM`), không đụng tới cài đặt và dữ liệu thật.
+
+**Giới hạn:** chữ ký chống được việc sửa cài đặt mà không qua chương trình. Người có quyền quản trị vẫn xóa được khóa Registry (chương trình sẽ về mặc định, Offset = 0). Người có kỹ năng dịch ngược exe về lý thuyết vẫn lấy được khóa ký.
+
+**Lần đầu chạy:** nhập lại Save Folder, Offset (với Nagy) và CSV Format. Các file `fpp_config.json`, `fpp_pending.json` của bản thử trước (nếu có) không còn dùng, xóa được. `calibration.txt` của bản cũ cũng không còn được đọc; với máy 4 điểm, nhập lại hệ số trong 3 Point Calibration.
 
 ## Giữ nguyên như bản gốc
 
 - Danh mục 8 line, 30 sản phẩm (4PP) và Nagy có thêm sản phẩm **TZ18** (test 5 Points / 3 Points); còn lại, 14 test, 220 điểm đo (4PP) và 4 line, 10 sản phẩm, 3 test (Nagy), lấy nguyên từ code gốc.
 - 4PP: chờ nhấc / đặt đầu đo (2 lần đọc lệch < 1%, test Calibration < 10%), quét 4 mức dòng × 3 lần đọc điện áp, hồi quy, loại khi r < 0.99, hệ số Sample Size (Float Ribbon 1.0 / 4x4 0.9981 / 12x12 0.9997 / 3x3 0.9966), đa thức hiệu chỉnh trong khoảng Low–High. Test "2 Inch / 4 Inch Ohms" dùng giá trị điện trở trung bình của Keithley.
-- Kết quả 4PP có điểm "Not Stored" (Continuous, Gage R and R, Calibration) ghi vào `C:\Records\` như cũ (đổi được bằng `records_path` trong `fpp_config.json`).
+- Kết quả 4PP có điểm "Not Stored" (Continuous, Gage R and R, Calibration) ghi vào `C:\Records\` như cũ.
 - Line OT1: **Get Host Data** đọc `http://ot01_h1/reports/samples/sample.flaws.00`.
 - Bấm vào một kết quả để đo lại điểm đó.
 
 ## Khác với bản gốc
 
 - Giao diện theo bản cũ: Setup Screen nhỏ gọn, MeasureForm với kết quả bên trái, số đo và biểu đồ bên phải.
-- Đổi Offset Nagy phải nhập mật khẩu (`ZZCARROT`, khai báo ở `OFFSET_PASSWORD` trong `src/main.rs`).
+- Đổi Offset Nagy và 3 Point Calibration phải nhập mật khẩu (`ZZCARROT`, khai báo ở `OFFSET_PASSWORD` trong `src/main.rs`).
 - Sample Size chỉ còn một mục **10cm x 10cm** (hệ số 0.9981, bằng mẫu 4x4 inch của bản gốc). Không ảnh hưởng Nagy; với máy 4 điểm, các test trước đây dùng "Float Ribbon" (hệ số 1.0) nay nhân 0.9981.
-- `calibration.txt` do bản cũ ghi (có BOM UTF-8) đọc được bình thường; cảnh báo về file này chỉ hiện ở màn hình 4-Point Probe.
+- Không còn dùng `calibration.txt`: hệ số 3 Point Calibration lưu cùng cài đặt có chữ ký, đổi phải có mật khẩu.
 
 - Thêm chọn định dạng CSV Default / ERS / Sequoia.
 - Dòng CSV không còn dấu phẩy thừa ở cuối, RunMinute ghi dạng số, khớp với file mẫu.
