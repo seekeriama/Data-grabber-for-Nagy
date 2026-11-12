@@ -22,7 +22,10 @@ const OFFSET_PASSWORD: &str = "ZZCARROT";
 
 /// Kích thước cửa sổ như bản cũ: Setup Screen nhỏ gọn, MeasureForm rộng.
 const SETUP_SIZE: [f32; 2] = [830.0, 420.0];
-const MEASURE_SIZE: [f32; 2] = [1386.0, 600.0];
+/// MeasureForm: cột kết quả 300 px (bằng ~50% trước đây) + khung thông tin / biểu đồ 755 px (giữ nguyên).
+const RESULTS_W: f32 = 300.0;
+const INFO_W: f32 = 755.0;
+const MEASURE_SIZE: [f32; 2] = [RESULTS_W + 12.0 + INFO_W + 16.0, 600.0];
 
 fn exe_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
@@ -602,8 +605,8 @@ impl App {
         let avail = ui.available_size();
         let bottom_h = 48.0;
         let body_h = (avail.y - bottom_h).max(200.0);
-        let left_w = (avail.x * 0.44).max(260.0);
-        let right_w = avail.x - left_w - 12.0;
+        let left_w = RESULTS_W;
+        let right_w = avail.x - left_w - 12.0; // = INFO_W ở kích thước mặc định
 
         ui.horizontal_top(|ui| {
             // Trái: danh sách kết quả
