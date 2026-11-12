@@ -157,7 +157,8 @@ mod tests {
     fn embedded_matches_original_counts() {
         let c = Catalog::embedded();
         // Số dòng đếm được từ IL của chương trình gốc
-        assert_eq!(c.nagy.lines.len(), 5);
+        assert_eq!(c.nagy.lines.len(), 7); // 5 của bản gốc + JB2, LK1
+        assert!(c.nagy.line("JB2").is_some() && c.nagy.line("LK1").is_some());
         assert_eq!(c.nagy.products.len(), 12); // 11 của bản gốc + TZ18
         assert_eq!(c.nagy.product_tests.len(), 14);
         assert_eq!(c.nagy.tests.len(), 3);

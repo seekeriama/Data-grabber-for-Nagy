@@ -20,6 +20,14 @@
    {
     "name": "NWD",
     "allow_host_data": false
+   },
+   {
+    "name": "JB2",
+    "allow_host_data": false
+   },
+   {
+    "name": "LK1",
+    "allow_host_data": false
    }
   ],
   "products": [

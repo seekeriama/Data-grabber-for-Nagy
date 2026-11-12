@@ -429,6 +429,9 @@ impl App {
         const C4: f32 = 300.0;
         const GAP: f32 = 16.0;
         let lbl = |s: &str| RichText::new(s).size(24.0);
+        // Giá trị trong các ô chọn / ô nhập: cùng cỡ chữ với nhãn "Line Code"
+        let val = |s: &str| RichText::new(if s.is_empty() { " " } else { s }).size(24.0);
+        let val_font = egui::FontId::proportional(24.0);
         ui.add_space(4.0);
         match &self.conn {
             Conn::Connecting(_) => {
@@ -466,9 +469,9 @@ impl App {
             ui.vertical(|ui| {
                 ui.set_width(C1);
                 ui.label(lbl("Line Code"));
-                egui::ComboBox::from_id_salt("line").width(C1 - 10.0).selected_text(&self.setup.line).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("line").width(C1 - 10.0).height(300.0).selected_text(val(&self.setup.line)).show_ui(ui, |ui| {
                     for l in &dc.lines {
-                        if ui.selectable_label(self.setup.line == l.name, if l.name.is_empty() { " " } else { &l.name }).clicked() {
+                        if ui.selectable_label(self.setup.line == l.name, val(&l.name)).clicked() {
                             new_line = Some(l.name.clone());
                         }
                     }
@@ -477,18 +480,18 @@ impl App {
             ui.vertical(|ui| {
                 ui.set_width(C2);
                 ui.label(lbl("Run Number"));
-                ui.add(egui::TextEdit::singleline(&mut self.setup.run_number).desired_width(C2).font(egui::TextStyle::Heading));
+                ui.add(egui::TextEdit::singleline(&mut self.setup.run_number).desired_width(C2).font(val_font.clone()));
             });
             ui.vertical(|ui| {
                 ui.set_width(C3);
                 ui.label(lbl("Run Minute"));
-                ui.add(egui::TextEdit::singleline(&mut self.setup.run_minute).desired_width(C3).font(egui::TextStyle::Heading));
+                ui.add(egui::TextEdit::singleline(&mut self.setup.run_minute).desired_width(C3).font(val_font.clone()));
             });
             ui.vertical(|ui| {
                 ui.set_width(C4);
                 ui.label(lbl("No. of Meas per Sample"));
                 let mut n = self.setup.meas_per_sample.clone();
-                ui.add_enabled(false, egui::TextEdit::singleline(&mut n).desired_width(70.0).horizontal_align(egui::Align::Center).font(egui::TextStyle::Heading));
+                ui.add_enabled(false, egui::TextEdit::singleline(&mut n).desired_width(70.0).horizontal_align(egui::Align::Center).font(val_font.clone()));
             });
         });
         ui.add_space(8.0);
@@ -500,9 +503,9 @@ impl App {
                 ui.set_width(C1 + GAP + C2 + GAP + C3);
                 ui.label(lbl("Product Type"));
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("product").width(C1 - 10.0).selected_text(&self.setup.product).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("product").width(C1 - 10.0).height(300.0).selected_text(val(&self.setup.product)).show_ui(ui, |ui| {
                         for p in &dc.products {
-                            if ui.selectable_label(self.setup.product == p.name, if p.name.is_empty() { " " } else { &p.name }).clicked() {
+                            if ui.selectable_label(self.setup.product == p.name, val(&p.name)).clicked() {
                                 new_product = Some(p.name.clone());
                             }
                         }
@@ -516,9 +519,9 @@ impl App {
                 ui.set_width(C4);
                 ui.label(lbl("Sample Size"));
                 let cur = self.setup.sample_size.and_then(|i| SAMPLE_SIZES.get(i)).map(|x| x.0).unwrap_or("");
-                egui::ComboBox::from_id_salt("ssize").width(C4 - 10.0).selected_text(cur).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("ssize").width(C4 - 10.0).selected_text(val(cur)).show_ui(ui, |ui| {
                     for (i, (n, _)) in SAMPLE_SIZES.iter().enumerate() {
-                        ui.selectable_value(&mut self.setup.sample_size, Some(i), *n);
+                        ui.selectable_value(&mut self.setup.sample_size, Some(i), val(n));
                     }
                 });
             });
@@ -537,7 +540,7 @@ impl App {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         for t in &self.setup.tests {
                             let sel = self.setup.test.as_deref() == Some(t);
-                            let text = RichText::new(t).size(22.0).color(if sel { Color32::WHITE } else { Color32::BLACK });
+                            let text = RichText::new(t).size(24.0).color(if sel { Color32::WHITE } else { Color32::BLACK });
                             let b = egui::Button::new(text).fill(if sel { Color32::from_rgb(0, 120, 215) } else { Color32::WHITE }).stroke(egui::Stroke::NONE).corner_radius(0.0);
                             if ui.add(b).clicked() {
                                 new_test = Some(t.clone());
