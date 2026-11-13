@@ -2,8 +2,8 @@
 //!
 //! Tên file gốc giữ nguyên; ERS và Sequoia chỉ thêm tiền tố:
 //!   Default -> Five-Points-20261017.csv
-//!   ERS     -> ERS_Five-Points-20261017.csv
-//!   Sequoia -> Sequoia_Five-Points-20261017.csv
+//!   ERS     -> ERS Five-Points-20261017.csv
+//!   Sequoia -> Sequoia Five-Points-20261017.csv
 //! Nội dung (cột, dòng) giống hệt nhau ở mọi định dạng.
 
 use crate::util::{fmt_num, fmt_time};
@@ -34,8 +34,8 @@ impl FileFormat {
     pub fn prefix(self) -> &'static str {
         match self {
             FileFormat::Default => "",
-            FileFormat::Ers => "ERS_",
-            FileFormat::Sequoia => "Sequoia_",
+            FileFormat::Ers => "ERS ",
+            FileFormat::Sequoia => "Sequoia ",
         }
     }
 
@@ -298,7 +298,7 @@ mod tests {
         let (ok, failed) = ps.write_block(&b, &FileFormat::ALL);
         assert!(failed.is_empty());
         let names: Vec<String> = ok.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, ["Five-Points-20261017.csv", "ERS_Five-Points-20261017.csv", "Sequoia_Five-Points-20261017.csv"]);
+        assert_eq!(names, ["Five-Points-20261017.csv", "ERS Five-Points-20261017.csv", "Sequoia Five-Points-20261017.csv"]);
         let expect = "ProductLine,Measurement time,RunNumber,RunMinute,Offset,LEMeasurement,LCMeasurement,CCMeasurement,RCMeasurement,REMeasurement\r\n\
                       VG1,17/10/2026 19:46:33,1981,29,-0.4,17.02,17.31,17.3,17.25,16.54\r\n";
         for p in &ok {
@@ -306,7 +306,7 @@ mod tests {
         }
         // lượt thứ hai: không ghi lại tiêu đề
         ps.write_block(&b, &[FileFormat::Ers]);
-        let s = std::fs::read_to_string(d.join("ERS_Five-Points-20261017.csv")).unwrap();
+        let s = std::fs::read_to_string(d.join("ERS Five-Points-20261017.csv")).unwrap();
         assert_eq!(s.matches("ProductLine").count(), 1);
         assert_eq!(s.lines().count(), 3);
         assert_eq!(std::fs::read_to_string(d.join("Five-Points-20261017.csv")).unwrap().lines().count(), 2);
@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(b.dir, save);
         assert_eq!(b.lines, vec!["OT1,5497,120,Left,Ohms_Val_LE,45.3"]);
         let tg = b.targets(&[FileFormat::Sequoia]);
-        assert_eq!(tg[0].path, save.join("Sequoia_20261017.csv"));
+        assert_eq!(tg[0].path, save.join("Sequoia 20261017.csv"));
         let gage = vec![Record { point: "Sample 1".into(), ers: "Not Stored".into(), value: 9.9, time: t(1, 0, 0) }];
         let info2 = RunInfo { test_name: "Gage R and R".into(), ..info };
         assert_eq!(fpp_block(&save, &rec, &info2, &gage, t(1, 0, 0)).unwrap().dir, rec);
@@ -348,7 +348,7 @@ mod tests {
         let mem = crate::secure::MemoryStore::default();
         let store = std::sync::Arc::new(crate::secure::SecureStore::new(Box::new(mem.clone())));
         // Giả lập file bị khóa: đặt một THƯ MỤC trùng tên file đích
-        let blocker = d.join("ERS_Five-Points-20261017.csv");
+        let blocker = d.join("ERS Five-Points-20261017.csv");
         std::fs::create_dir_all(&blocker).unwrap();
         let info = RunInfo { line: "VG1".into(), run_number: "1".into(), run_minute: "2".into(), test_name: "5 Points".into(), offset_nagy: 0.0 };
         let b = nagy_block(&d, &info, &five_point_records(), t(1, 0, 0)).unwrap();
