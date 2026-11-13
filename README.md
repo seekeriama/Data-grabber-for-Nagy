@@ -42,8 +42,8 @@ Có 3 ô chọn; bắt buộc chọn ít nhất 1, chọn được cả 3. Mỗi
 | Định dạng | Nagy 5 điểm | Nagy 3 điểm | Nagy Continuous | 4-Point Probe |
 |---|---|---|---|---|
 | Default | `Five-Points-20261017.csv` | `Three-Point-20261017.csv` | `Continuous-20261017.csv` | `20261017.csv` |
-| ERS | `ERS_Five-Points-20261017.csv` | `ERS_Three-Point-…` | `ERS_Continuous-…` | `ERS_20261017.csv` |
-| Sequoia | `Sequoia_Five-Points-20261017.csv` | `Sequoia_Three-Point-…` | `Sequoia_Continuous-…` | `Sequoia_20261017.csv` |
+| ERS | `ERS Five-Points-20261017.csv` | `ERS Three-Point-…` | `ERS Continuous-…` | `ERS 20261017.csv` |
+| Sequoia | `Sequoia Five-Points-20261017.csv` | `Sequoia Three-Point-…` | `Sequoia Continuous-…` | `Sequoia 20261017.csv` |
 
 Ví dụ một dòng Nagy 5 điểm (đúng cột như file mẫu):
 ```

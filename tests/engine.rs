@@ -89,7 +89,7 @@ fn nagy_five_points_with_offset_and_csv() {
     assert!(failed.is_empty());
     assert_eq!(ok.len(), 3);
     let text = std::fs::read_to_string(&ok[1]).unwrap();
-    assert!(ok[1].file_name().unwrap().to_string_lossy().starts_with("ERS_Five-Points-"));
+    assert!(ok[1].file_name().unwrap().to_string_lossy().starts_with("ERS Five-Points-"));
     assert!(text.lines().nth(1).unwrap().ends_with(",1981,29,-0.4,17.02,17.31,17.3,-0.4,16.54"), "{text}");
     h.stop();
 }
