@@ -26,7 +26,12 @@ pub struct Config {
     pub file_formats: Vec<FileFormat>,
     /// Hệ số đa thức 4PP (trước đây ở calibration.txt)
     pub poly: Poly,
+    /// Cỡ chữ kết quả trên MeasureForm, % so với chuẩn (M = 100, L = 130, XL = 160)
+    pub result_font_pct: u32,
 }
+
+pub const RESULT_FONT_MIN: u32 = 60;
+pub const RESULT_FONT_MAX: u32 = 250;
 
 impl Default for Config {
     fn default() -> Self {
@@ -38,6 +43,7 @@ impl Default for Config {
             offset_nagy: 0.0,
             file_formats: vec![FileFormat::Default],
             poly: Poly::default(),
+            result_font_pct: 100,
         }
     }
 }
@@ -54,6 +60,8 @@ impl Config {
         if !self.offset_nagy.is_finite() {
             self.offset_nagy = 0.0;
         }
+        // cài đặt cũ chưa có trường này -> serde(default) cho 100
+        self.result_font_pct = self.result_font_pct.clamp(RESULT_FONT_MIN, RESULT_FONT_MAX);
         self
     }
 
@@ -176,6 +184,16 @@ mod tests {
         let (c3, w3) = Config::load(&st);
         assert_eq!(c3.offset_nagy, 0.0);
         assert!(w3.unwrap().contains("changed outside"));
+    }
+
+    #[test]
+    fn result_font_default_and_clamp() {
+        let c: Config = serde_json::from_str(r#"{"offset_nagy":-0.4}"#).unwrap();
+        assert_eq!(c.normalized().result_font_pct, 100, "cài đặt cũ -> M");
+        let c: Config = serde_json::from_str(r#"{"result_font_pct":999}"#).unwrap();
+        assert_eq!(c.normalized().result_font_pct, RESULT_FONT_MAX);
+        let c: Config = serde_json::from_str(r#"{"result_font_pct":10}"#).unwrap();
+        assert_eq!(c.normalized().result_font_pct, RESULT_FONT_MIN);
     }
 
     #[test]

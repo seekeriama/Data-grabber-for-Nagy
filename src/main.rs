@@ -27,7 +27,50 @@ const SETUP_SIZE: [f32; 2] = [830.0, 420.0];
 /// MeasureForm: cột kết quả 300 px (bằng ~50% trước đây) + khung thông tin / biểu đồ 755 px (giữ nguyên).
 const RESULTS_W: f32 = 300.0;
 const INFO_W: f32 = 755.0;
-const MEASURE_SIZE: [f32; 2] = [RESULTS_W + 12.0 + INFO_W + 16.0, 600.0];
+/// Cột kết quả rộng ra theo cỡ chữ; khung thông tin / biểu đồ giữ nguyên.
+fn measure_size(scale: f32) -> [f32; 2] {
+    [RESULTS_W * scale + 12.0 + INFO_W + 16.0, 600.0]
+}
+
+/// Cỡ chữ kết quả: M (chuẩn, như bản cũ), L, XL; ngoài ra chọn tuỳ ý bằng thanh trượt.
+const FONT_PRESETS: [(&str, u32); 3] = [("M", 100), ("L", 130), ("XL", 160)];
+
+/// Bộ chọn cỡ chữ (2 dòng): "Result font: M L XL Custom", dòng dưới là thanh trượt khi chọn Custom.
+/// Trả về giá trị mới khi người dùng chọn xong. `custom` giữ giá trị đang kéo của thanh trượt.
+fn font_selector(ui: &mut egui::Ui, current: u32, custom: &mut Option<u32>) -> Option<u32> {
+    use fpp::config::{RESULT_FONT_MAX, RESULT_FONT_MIN};
+    let is_preset = FONT_PRESETS.iter().any(|(_, v)| *v == current);
+    let custom_sel = custom.is_some() || !is_preset;
+    let mut out = None;
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Result font:").size(14.0));
+            for (name, v) in FONT_PRESETS {
+                let sel = current == v && custom.is_none();
+                if ui.selectable_label(sel, RichText::new(name).size(14.0).strong()).on_hover_text(format!("{v}%")).clicked() {
+                    *custom = None;
+                    out = Some(v);
+                }
+            }
+            if ui.selectable_label(custom_sel, RichText::new("Custom").size(14.0)).clicked() && custom.is_none() {
+                *custom = Some(current);
+            }
+        });
+        if custom_sel {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().slider_width = 160.0;
+                let mut v = custom.unwrap_or(current);
+                let r = ui.add(egui::Slider::new(&mut v, RESULT_FONT_MIN..=RESULT_FONT_MAX).suffix("%").step_by(5.0));
+                *custom = Some(v);
+                // áp dụng khi thả chuột (hoặc đổi bằng bàn phím), tránh đổi cỡ cửa sổ liên tục lúc kéo
+                if (r.drag_stopped() || (r.changed() && !r.dragged())) && v != current {
+                    out = Some(v);
+                }
+            });
+        }
+    });
+    out
+}
 
 fn tone_colors(t: Tone) -> (Color32, Color32) {
     // (chữ, nền)
@@ -101,6 +144,8 @@ struct App {
     save_note: Option<(String, bool)>,
     /// Màn hình đang hiển thị lần vẽ trước (để đổi kích thước / tiêu đề cửa sổ)
     shown_measure: Option<bool>,
+    /// Giá trị đang chỉnh của thanh trượt cỡ chữ (Custom)
+    font_custom: Option<u32>,
 }
 
 impl App {
@@ -133,6 +178,7 @@ impl App {
             folder_edit: None,
             save_note: None,
             shown_measure: None,
+            font_custom: None,
         };
         if !app.pending.items.is_empty() {
             app.save_note = Some((format!("{} CSV write(s) waiting from last session; retrying...", app.pending.items.len()), true));
@@ -375,6 +421,14 @@ impl App {
                     ui.label(RichText::new("Each result is written to every selected file.\nColumns are the same in all formats.").small());
                     ui.label(RichText::new("Three-Point- / Continuous- files get the same prefix.\n4-Point Probe (Keithley) keeps its original name: yyyymmdd.csv").small().weak());
                 });
+                let mut nf = None;
+                ui.menu_button(small("Result Font"), |ui| {
+                    ui.label(small("Font size of results and live reading on the measurement screen:"));
+                    nf = font_selector(ui, self.cfg.result_font_pct, &mut self.font_custom);
+                });
+                if let Some(v) = nf {
+                    self.set_result_font(v);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let conn_label = match &self.conn {
                         Conn::Ready { device, .. } => format!("Connected To: {}", device.label()),
@@ -583,7 +637,20 @@ impl App {
 
     /// Màn hình đo (MeasureForm) theo bố cục bản cũ: kết quả bên trái; thông tin, số đo trực tiếp
     /// và biểu đồ bên phải; Exit Measurement / Submit ở dưới.
+    fn result_scale(&self) -> f32 {
+        self.cfg.result_font_pct as f32 / 100.0
+    }
+
+    fn set_result_font(&mut self, pct: u32) {
+        self.cfg.result_font_pct = pct;
+        self.save_cfg();
+        self.shown_measure = None; // đổi bề rộng cửa sổ theo cột kết quả
+    }
+
     fn measure_ui(&mut self, ui: &mut egui::Ui) {
+        let sc = self.result_scale();
+        let cur_pct = self.cfg.result_font_pct;
+        let mut new_font = None;
         let Some(m) = &mut self.measure else { return };
         let mut remeasure_click = None;
         let mut submit = false;
@@ -592,24 +659,33 @@ impl App {
         let avail = ui.available_size();
         let bottom_h = 48.0;
         let body_h = (avail.y - bottom_h).max(200.0);
-        let left_w = RESULTS_W;
+        let left_w = RESULTS_W * sc;
         let right_w = avail.x - left_w - 12.0; // = INFO_W ở kích thước mặc định
 
         ui.horizontal_top(|ui| {
             // Trái: danh sách kết quả
             ui.allocate_ui_with_layout(egui::vec2(left_w, body_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_min_size(egui::vec2(left_w, body_h));
-                egui::ScrollArea::vertical().id_salt("results").auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                // chừa chỗ dưới cùng cho bộ chọn cỡ chữ
+                let selector_h = if self.font_custom.is_some() || !FONT_PRESETS.iter().any(|(_, v)| *v == cur_pct) { 64.0 } else { 34.0 };
+                egui::ScrollArea::vertical().id_salt("results").max_height(body_h - selector_h).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
                     for (i, r) in m.records.iter().enumerate() {
                         let text = format!("{} - {}", r.point, fmt_num(round2(r.value)));
-                        let b = egui::Button::new(RichText::new(text).size(20.0).strong().color(Color32::BLACK))
+                        let b = egui::Button::new(RichText::new(text).size(20.0 * sc).strong().color(Color32::BLACK))
                             .fill(Color32::from_rgb(144, 238, 144))
-                            .min_size(egui::vec2(left_w - 24.0, 34.0));
+                            .min_size(egui::vec2(left_w - 24.0, 34.0 * sc));
                         let enabled = !m.closing && m.confirm_remeasure.is_none() && !m.confirm_exit;
                         if ui.add_enabled(enabled, b).on_hover_text("Click to remeasure").clicked() {
                             remeasure_click = Some(i);
                         }
                     }
+                });
+                // Bộ chọn cỡ chữ: góc dưới cột kết quả (chỗ trống), không đè lên nút Submit
+                ui.add_space(4.0);
+                ui.scope(|ui| {
+                    ui.set_max_width(left_w);
+                    ui.style_mut().override_font_id = Some(egui::FontId::proportional(14.0));
+                    new_font = font_selector(ui, cur_pct, &mut self.font_custom);
                 });
             });
             // Phải: thông tin + biểu đồ
@@ -642,7 +718,10 @@ impl App {
                     ui.label(mono(&m.sample_name, 22.0));
                     ui.label(RichText::new("Live Reading").size(13.0).color(Color32::BLACK));
                     ui.vertical_centered(|ui| {
-                        ui.label(mono(&m.live.0, 40.0).color(live_fg));
+                        // không vượt khung: chữ dài (vd "No Active Measurement") tự thu nhỏ vừa bề rộng
+                        let chars = m.live.0.chars().count().max(1) as f32;
+                        let live_size = (40.0 * sc).min((right_w - 48.0) / (chars * 0.62)).max(16.0);
+                        ui.label(mono(&m.live.0, live_size).color(live_fg));
                     });
                     if let Some(e) = &m.comm_error {
                         ui.colored_label(Color32::RED, RichText::new(e).size(13.0));
@@ -658,7 +737,7 @@ impl App {
         // Dưới: Exit Measurement | Submit
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.add_space(left_w - 30.0);
+            ui.add_space((left_w - 30.0).max(8.0));
             let btn = |ui: &mut egui::Ui, s: &str, on: bool| ui.add_enabled_ui(on, |ui| ui.add_sized([176.0, 36.0], egui::Button::new(RichText::new(s).size(20.0)))).inner.clicked();
             exit = btn(ui, "Exit Measurement", !m.closing);
             ui.add_space(80.0);
@@ -682,6 +761,9 @@ impl App {
         }
         if submit {
             self.submit();
+        }
+        if let Some(v) = new_font {
+            self.set_result_font(v);
         }
     }
 
@@ -1086,7 +1168,7 @@ impl eframe::App for App {
             self.shown_measure = Some(measuring);
             let sim = if self.simulate.is_some() { " (SIMULATION)" } else { "" };
             let (size, title) = if measuring {
-                (MEASURE_SIZE, format!("MeasureForm{sim}"))
+                (measure_size(self.result_scale()), format!("MeasureForm{sim}"))
             } else {
                 let t = match self.device().unwrap_or(self.cfg.device) {
                     Device::Nagy => "Nagy Setup Screen",

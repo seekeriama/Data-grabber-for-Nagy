@@ -84,6 +84,7 @@ HKEY_CURRENT_USER\Software\Pilkington\FourPointProbe   (giá trị Settings, Pen
 ## Khác với bản gốc
 
 - Giao diện theo bản cũ: Setup Screen nhỏ gọn, MeasureForm với kết quả bên trái, số đo và biểu đồ bên phải.
+- **Cỡ chữ kết quả** trên MeasureForm (góc dưới cột kết quả, hoặc menu **Result Font** ở Setup Screen): M (chuẩn), L (130%), XL (160%) hoặc **Custom** 60–250% bằng thanh trượt. Chỉ áp dụng cho danh sách kết quả từng vị trí và số Live Reading; cột kết quả và cửa sổ tự rộng ra theo, khung thông tin và biểu đồ giữ nguyên. Lựa chọn được lưu lại cho lần sau.
 - Đổi Offset Nagy và 3 Point Calibration phải nhập mật khẩu (`ZZCARROT`, khai báo ở `OFFSET_PASSWORD` trong `src/main.rs`).
 - Sample Size chỉ còn một mục **10cm x 10cm** (hệ số 0.9981, bằng mẫu 4x4 inch của bản gốc). Không ảnh hưởng Nagy; với máy 4 điểm, các test trước đây dùng "Float Ribbon" (hệ số 1.0) nay nhân 0.9981.
 - Không còn dùng `calibration.txt`: hệ số 3 Point Calibration lưu cùng cài đặt có chữ ký, đổi phải có mật khẩu.
