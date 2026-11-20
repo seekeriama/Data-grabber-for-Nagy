@@ -1,16 +1,20 @@
 # Build FourPointProbe.exe cho Windows trên GitHub Actions.
-#  - Mỗi lần push / pull request: chạy kiểm thử + build, tải file exe ở mục "Artifacts" của lượt chạy.
-#  - Chạy tay: tab Actions -> "Build Windows" -> "Run workflow".
-#  - Gắn tag dạng v1.0.0 (git tag v1.0.0 && git push --tags): tạo thêm một Release có file zip.
+#  - Chỉ chạy khi bạn bấm: tab Actions -> "Build Windows" -> "Run workflow" (commit/push KHÔNG tự chạy).
+#    File exe nằm ở mục "Artifacts" của lượt chạy.
+#  - Muốn tạo Release luôn: điền ô "Tên tag" (vd v1.0.1) khi bấm Run workflow.
+#  - Hoặc gắn tag dạng v1.0.0 và đẩy lên: cũng tạo Release có file zip.
 
 name: Build Windows
 
 on:
   push:
-    branches: [main, master]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tên tag để tạo Release (vd v1.0.1). Để trống nếu chỉ muốn build."
+        required: false
+        default: ""
 
 permissions:
   contents: write   # cần để tạo Release khi đẩy tag
@@ -49,9 +53,10 @@ jobs:
           path: dist/
           retention-days: 90
 
-      - name: Tạo Release (chỉ khi đẩy tag v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Tạo Release (khi đẩy tag v* hoặc điền tên tag)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: FourPointProbe-windows-x64.zip
           generate_release_notes: true
