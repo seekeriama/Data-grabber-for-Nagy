@@ -1,7 +1,7 @@
 [package]
 name = "fourpointprobe"
 version = "1.0.1"
-edition = "2026"
+edition = "2021"
 description = "Rewrite of FourPointProbe_Handheld (Keithley 4-point probe + Nagy) with Default / ERS / Sequoia CSV formats"
 
 [lib]
