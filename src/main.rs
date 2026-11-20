@@ -40,23 +40,25 @@ const FONT_PRESETS: [(&str, u32); 3] = [("M", 100), ("L", 130), ("XL", 160)];
 fn font_selector(ui: &mut egui::Ui, current: u32, custom: &mut Option<u32>) -> Option<u32> {
     use fpp::config::{RESULT_FONT_MAX, RESULT_FONT_MIN};
     let is_preset = FONT_PRESETS.iter().any(|(_, v)| *v == current);
-    let custom_sel = custom.is_some() || !is_preset;
+    let open = custom.is_some();
     let mut out = None;
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Result font:").size(14.0));
             for (name, v) in FONT_PRESETS {
-                let sel = current == v && custom.is_none();
-                if ui.selectable_label(sel, RichText::new(name).size(14.0).strong()).on_hover_text(format!("{v}%")).clicked() {
-                    *custom = None;
+                if ui.selectable_label(current == v, RichText::new(name).size(14.0).strong()).on_hover_text(format!("{v}%")).clicked() {
+                    if open {
+                        *custom = Some(v); // thanh trượt (đang mở) nhảy ngay về giá trị mới
+                    }
                     out = Some(v);
                 }
             }
-            if ui.selectable_label(custom_sel, RichText::new("Custom").size(14.0)).clicked() && custom.is_none() {
-                *custom = Some(current);
+            // Bấm Custom để mở thanh trượt, bấm lần nữa để ẩn
+            if ui.selectable_label(open || !is_preset, RichText::new("Custom").size(14.0)).clicked() {
+                *custom = if open { None } else { Some(current) };
             }
         });
-        if custom_sel {
+        if custom.is_some() {
             ui.horizontal(|ui| {
                 ui.spacing_mut().slider_width = 160.0;
                 let mut v = custom.unwrap_or(current);
@@ -667,7 +669,7 @@ impl App {
             ui.allocate_ui_with_layout(egui::vec2(left_w, body_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_min_size(egui::vec2(left_w, body_h));
                 // chừa chỗ dưới cùng cho bộ chọn cỡ chữ
-                let selector_h = if self.font_custom.is_some() || !FONT_PRESETS.iter().any(|(_, v)| *v == cur_pct) { 64.0 } else { 34.0 };
+                let selector_h = if self.font_custom.is_some() { 64.0 } else { 34.0 };
                 egui::ScrollArea::vertical().id_salt("results").max_height(body_h - selector_h).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
                     for (i, r) in m.records.iter().enumerate() {
                         let text = format!("{} - {}", r.point, fmt_num(round2(r.value)));

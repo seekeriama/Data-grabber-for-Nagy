@@ -1,8 +1,8 @@
 [package]
 name = "fourpointprobe"
-version = "1.0.0"
-edition = "2021"
-description = "Rust rewrite of FourPointProbe_Handheld (Keithley 4-point probe + Nagy) with Default / ERS / Sequoia CSV formats"
+version = "1.0.1"
+edition = "2026"
+description = "Rewrite of FourPointProbe_Handheld (Keithley 4-point probe + Nagy) with Default / ERS / Sequoia CSV formats"
 
 [lib]
 name = "fpp"
